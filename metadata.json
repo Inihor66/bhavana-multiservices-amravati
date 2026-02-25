@@ -1,0 +1,8 @@
+{
+  "name": "Bhavana Multiservices",
+  "description": "A comprehensive service booking platform with AI-powered chat support and admin management.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
