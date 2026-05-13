@@ -6,14 +6,15 @@ import Database from "better-sqlite3";
 import path from "path";
 import { fileURLToPath } from "url";
 
-let __filename = "";
-let __dirname = "";
+// --- ESM/CJS Compatibility ---
+const _filename = typeof import.meta !== 'undefined' && import.meta.url
+  ? fileURLToPath(import.meta.url)
+  : (typeof __filename !== 'undefined' ? __filename : '');
 
-if (typeof import.meta !== "undefined" && import.meta.url) {
-  __filename = fileURLToPath(import.meta.url);
-  __dirname = path.dirname(__filename);
-}
-// In CJS, __filename and __dirname are already globally available.
+const _dirname = typeof import.meta !== 'undefined' && import.meta.url
+  ? path.dirname(_filename)
+  : (typeof __dirname !== 'undefined' ? __dirname : '');
+// -----------------------------
 
 const db = new Database("bhavana.db");
 
@@ -137,7 +138,7 @@ async function startServer() {
 
   // Vite middleware for development
   const isProduction = process.env.NODE_ENV === "production";
-  const isBundled = __filename.endsWith('.cjs');
+  const isBundled = _filename.endsWith('.cjs');
 
   if (!isProduction && !isBundled) {
     console.log("Starting in DEVELOPMENT mode with Vite middleware");
@@ -148,8 +149,10 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     console.log("Starting in PRODUCTION mode");
-    // When running node dist/server.cjs from root, process.cwd() is root
-    const staticPath = path.join(process.cwd(), 'dist');
+    // When running node dist/server.cjs, _dirname is the dist folder
+    // But wait, if server.ts is at root and bundled to dist/server.cjs,
+    // _dirname becomes absolute path to dist/
+    const staticPath = _dirname; 
     app.use(express.static(staticPath));
     app.get('*', (req, res) => {
       res.sendFile(path.join(staticPath, 'index.html'));
