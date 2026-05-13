@@ -51,9 +51,22 @@ async function startServer() {
 
   app.use(express.json({ limit: '50mb' }));
 
+  // Logging middleware
+  app.use((req, res, next) => {
+    console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
+    next();
+  });
+
   // Health check
   app.get("/api/health", (req, res) => {
-    res.json({ status: "ok", env: process.env.NODE_ENV });
+    console.log("Health check hit");
+    res.json({ 
+      status: "ok", 
+      env: process.env.NODE_ENV,
+      cwd: process.cwd(),
+      dirname: _dirname,
+      filename: _filename
+    });
   });
 
   // API Routes
@@ -136,26 +149,45 @@ async function startServer() {
     });
   });
 
-  // Vite middleware for development
-  const isProduction = process.env.NODE_ENV === "production";
-  const isBundled = _filename.endsWith('.cjs');
+  // ... (API and Socket.io routes above)
 
-  if (!isProduction && !isBundled) {
+  // Frontend serving logic (must be last)
+  const isProduction = process.env.NODE_ENV === "production" || _filename.endsWith('.cjs');
+
+  if (!isProduction) {
     console.log("Starting in DEVELOPMENT mode with Vite middleware");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
     });
     app.use(vite.middlewares);
+
+    // SPA fallback for development
+    app.get('*', async (req, res, next) => {
+      const url = req.originalUrl;
+      if (url.startsWith('/api')) return next();
+      try {
+        const fs = await import('fs');
+        const templatePath = path.resolve(_dirname, 'index.html');
+        if (!fs.existsSync(templatePath)) {
+          return res.status(404).send('index.html not found at ' + templatePath);
+        }
+        let template = fs.readFileSync(templatePath, 'utf-8');
+        template = await vite.transformIndexHtml(url, template);
+        res.status(200).set({ 'Content-Type': 'text/html' }).end(template);
+      } catch (e) {
+        vite.ssrFixStacktrace(e as Error);
+        next(e);
+      }
+    });
   } else {
     console.log("Starting in PRODUCTION mode");
-    // When running node dist/server.cjs, _dirname is the dist folder
-    // But wait, if server.ts is at root and bundled to dist/server.cjs,
-    // _dirname becomes absolute path to dist/
-    const staticPath = _dirname; 
+    const staticPath = _dirname;
+    console.log("Static path:", staticPath);
     app.use(express.static(staticPath));
     app.get('*', (req, res) => {
-      res.sendFile(path.join(staticPath, 'index.html'));
+      const indexPath = path.join(staticPath, 'index.html');
+      res.sendFile(indexPath);
     });
   }
 
