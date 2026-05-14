@@ -6,6 +6,12 @@ import Database from "better-sqlite3";
 import path from "path";
 import { fileURLToPath } from "url";
 
+import { GoogleGenAI } from "@google/genai";
+
+// Initialize Gemini
+const genAI = process.env.GEMINI_API_KEY ? new GoogleGenAI(process.env.GEMINI_API_KEY) : null;
+const model = genAI ? genAI.getGenerativeModel({ model: "gemini-1.5-flash" }) : null;
+
 // --- ESM/CJS Compatibility ---
 const _filename = typeof import.meta !== 'undefined' && import.meta.url
   ? fileURLToPath(import.meta.url)
@@ -96,7 +102,7 @@ async function startServer() {
   });
 
   app.post("/api/admin/reply", (req, res) => {
-    const { customerId, content, type } = req.body;
+    const { customerId, content, type, tempId } = req.body;
     console.log(`Admin replying to ${customerId}:`, content);
     const stmt = db.prepare("INSERT INTO messages (customer_id, sender, content, type) VALUES (?, ?, ?, ?)");
     const info = stmt.run(customerId, 'admin', content, type || 'text');
@@ -108,7 +114,8 @@ async function startServer() {
       content,
       type: type || 'text',
       timestamp: new Date().toISOString(),
-      seen: 0
+      seen: 0,
+      tempId
     };
 
     // Notify the specific customer
@@ -128,6 +135,39 @@ async function startServer() {
     res.json({ success: true });
   });
 
+  app.post("/api/ai/chat", async (req, res) => {
+    if (!model) {
+      return res.status(503).json({ error: "AI service not configured" });
+    }
+    
+    try {
+      const { message, language, hasSentPhoto } = req.body;
+      
+      const prompt = `You are a friendly and professional customer support assistant for BHAVANA MULTISERVICES. 
+      The user is communicating in ${language}. 
+      
+      Your style: Casual yet professional, with a warm human touch. Think of yourself as a helpful neighbor who is also an expert.
+      
+      Guidelines:
+      1. RELEVANCE: Respond directly to what the user said. Don't be a robot. If they say "hi", say "hi" back warmly.
+      2. CONCISENESS: Keep it short and sweet (1-2 sentences).
+      3. HUMAN TOUCH: Use natural phrasing. Avoid overly formal or corporate jargon.
+      4. MANDATORY CLOSING: You must end your message by letting them know our team is looking into it. Use variations like: "Our team is checking this out and will get back to you soon!" or "We're on it! Someone from our team will reach out shortly."
+      5. PHOTOS: If they haven't sent a photo yet (hasSentPhoto: ${hasSentPhoto}), suggest it naturally: "A quick photo of the issue would really help us see what's going on!"
+      6. CONTACT: For urgent help, they can call us 24/7 at 9881345984.
+      7. LANGUAGE: Speak ONLY in ${language}.
+      
+      User message: ${message}`;
+
+      const result = await model.generateContent(prompt);
+      const response = result.response;
+      res.json({ text: response.text() });
+    } catch (error: any) {
+      console.error("AI Error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // Socket.io logic
   io.on("connection", (socket) => {
     console.log("A user connected:", socket.id);
@@ -143,8 +183,8 @@ async function startServer() {
     });
 
     socket.on("sendMessage", (data) => {
-      const { customerId, sender, content, type } = data;
-      console.log(`Socket [${socket.id}] received message from ${sender} for ${customerId} (Type: ${type}, ContentLen: ${content?.length})`);
+      const { customerId, sender, content, type, tempId } = data;
+      console.log(`Socket [${socket.id}] received message from ${sender} for ${customerId} (Type: ${type}, ContentLen: ${content?.length}, TempId: ${tempId})`);
       
       try {
         if (!customerId) {
@@ -162,13 +202,17 @@ async function startServer() {
           content,
           type: type || 'text',
           timestamp: new Date().toISOString(),
-          seen: 0
+          seen: 0,
+          tempId // Echo back the tempId
         };
 
         console.log(`Saved message ID ${message.id}. Emitting to room ${customerId} and admins.`);
 
         // Broadcast to customer room
         io.to(customerId).emit("message", message);
+        
+        // Also emit directly to the sender as a safety measure
+        socket.emit("message", message);
         
         // Broadcast to all admins
         io.to("admins").emit("admin:new_message", message); 
@@ -207,7 +251,7 @@ async function startServer() {
     // SPA fallback for dev mode
     app.get('*', async (req, res, next) => {
       const url = req.originalUrl;
-      if (url.startsWith('/api')) return next();
+      if (url.startsWith('/api') || url.startsWith('/socket.io')) return next();
       try {
         const fs = await import('fs');
         const templatePath = path.resolve(_dirname, 'index.html');

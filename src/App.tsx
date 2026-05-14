@@ -36,6 +36,7 @@ type Message = {
   type: 'text' | 'image' | 'audio';
   timestamp: string;
   seen: number;
+  tempId?: string;
 };
 
 type Customer = {
@@ -170,12 +171,17 @@ export default function App() {
       setIsConnected(false);
     });
 
-    newSocket.on('message', (msg: Message) => {
+    newSocket.on('message', (msg: Message & { tempId?: string }) => {
       console.log("Received 'message' event:", msg);
       if (msg.customer_id === customerId) {
         setMessages(prev => {
-          // Remove optimistic message that matches the incoming one
-          const filtered = prev.filter(m => m.id > 0 || m.content !== msg.content || m.sender !== msg.sender);
+          // Remove optimistic message that matches the incoming one by tempId or content
+          const filtered = prev.filter(m => {
+            if (m.id > 0) return true; // Keep permanent messages
+            if (msg.tempId && m.tempId === msg.tempId) return false;
+            // Fallback for older messages or different flow
+            return m.content !== msg.content || m.sender !== msg.sender;
+          });
           // Prevent duplicates
           if (filtered.some(m => m.id === msg.id)) return filtered;
           return [...filtered, msg];
@@ -183,14 +189,18 @@ export default function App() {
       }
     });
 
-    newSocket.on('admin:new_message', (msg: Message) => {
+    newSocket.on('admin:new_message', (msg: Message & { tempId?: string }) => {
       console.log("Received 'admin:new_message' event:", msg);
       if (viewRef.current === 'admin') {
         fetchCustomers();
         if (selectedAdminCustomerRef.current?.id === msg.customer_id) {
           setMessages(prev => {
             // Remove optimistic message that matches the incoming one
-            const filtered = prev.filter(m => m.id > 0 || m.content !== msg.content || m.sender !== msg.sender);
+            const filtered = prev.filter(m => {
+              if (m.id > 0) return true;
+              if (msg.tempId && m.tempId === msg.tempId) return false;
+              return m.content !== msg.content || m.sender !== msg.sender;
+            });
             if (filtered.some(m => m.id === msg.id)) return filtered;
             return [...filtered, msg];
           });
@@ -259,15 +269,16 @@ export default function App() {
     };
 
     // Optimistic Update for UI
-    const optimisticId = -Date.now(); // Negative ID for temporary identification
+    const tempId = 'temp_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
     const optimisticMsg: Message = {
-      id: optimisticId,
+      id: -1, // Use -1 for all optimistic messages
       customer_id: targetCustomerId,
       sender,
       content,
       type,
       timestamp: new Date().toISOString(),
-      seen: 0
+      seen: 0,
+      tempId
     };
 
     if (sender === 'user' || sender === 'admin') {
@@ -281,11 +292,10 @@ export default function App() {
         const res = await fetch('/api/admin/reply', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(msgData)
+          body: JSON.stringify({ ...msgData, tempId })
         });
         if (res.ok) {
            // Success - server will emit admin:new_message which we catch
-           // We'll replace the optimistic message when the real one arrives
         }
       } else {
         if (!socket.connected) {
@@ -293,7 +303,7 @@ export default function App() {
           socket.connect();
         }
         
-        socket.emit('sendMessage', msgData);
+        socket.emit('sendMessage', { ...msgData, tempId });
 
         // If user sent a message, trigger AI response
         if (sender === 'user') {
@@ -302,12 +312,7 @@ export default function App() {
           
           // Don't await AI response before finishing user send
           getAiResponse(promptText, language, hasPhoto).then((aiResponse) => {
-            socket.emit('sendMessage', {
-              customerId,
-              sender: 'ai',
-              content: aiResponse,
-              type: 'text'
-            });
+            sendMessage(aiResponse, 'text', 'ai');
           }).catch(err => {
             console.error("AI Response error:", err);
           });
