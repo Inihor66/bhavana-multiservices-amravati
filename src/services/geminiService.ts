@@ -28,6 +28,7 @@ export async function getAiResponse(message: string, language: string, hasSentPh
     return response.text || "I'm checking on that for you! Our team will get back to you soon.";
   } catch (error) {
     console.error("Gemini Service Error:", error);
-    return "I'm sorry, I encountered an error. Please contact us directly at 9881345984. Our team is looking into it!";
+    // Return a friendly fallback instead of just throwing
+    return "Thank you for your message! Our team is processing your request and will get back to you shortly. For urgent matters, please call 9881345984.";
   }
 }

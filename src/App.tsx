@@ -97,7 +97,9 @@ export default function App() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [selectedAdminCustomer, setSelectedAdminCustomer] = useState<Customer | null>(null);
   const [isRecording, setIsRecording] = useState(false);
+  const [isSending, setIsSending] = useState(false);
   const [unseenCounts, setUnseenCounts] = useState<Record<string, number>>({});
+  const [isConnected, setIsConnected] = useState(false);
   const mediaRecorder = useRef<MediaRecorder | null>(null);
   const audioChunks = useRef<Blob[]>([]);
   const selectedAdminCustomerRef = useRef<Customer | null>(null);
@@ -132,24 +134,51 @@ export default function App() {
   }, [customers, messages, view]);
 
   useEffect(() => {
+    if (view === 'admin' && socket && isConnected) {
+      console.log("Emitting joinAdmin");
+      socket.emit('joinAdmin');
+    }
+  }, [view, socket, isConnected]);
+
+  useEffect(() => {
     try {
       localStorage.setItem('customerId', customerId);
     } catch (e) {
       console.warn('Could not save customerId to localStorage');
     }
-    const newSocket = io();
+    const newSocket = io({
+      reconnectionAttempts: 10,
+      timeout: 20000,
+      transports: ['websocket', 'polling'], // Try websocket first
+    });
     setSocket(newSocket);
 
-    newSocket.emit('join', customerId);
-    fetchCustomers();
+    newSocket.on('connect', () => {
+      console.log("Socket connected! ID:", newSocket.id);
+      setIsConnected(true);
+      newSocket.emit('join', customerId);
+      fetchCustomers();
+    });
+
+    newSocket.on('disconnect', () => {
+      console.log("Socket disconnected");
+      setIsConnected(false);
+    });
+
+    newSocket.on('connect_error', (err) => {
+      console.error("Socket Connection Error:", err);
+      setIsConnected(false);
+    });
 
     newSocket.on('message', (msg: Message) => {
       console.log("Received 'message' event:", msg);
       if (msg.customer_id === customerId) {
         setMessages(prev => {
+          // Remove optimistic message that matches the incoming one
+          const filtered = prev.filter(m => m.id > 0 || m.content !== msg.content || m.sender !== msg.sender);
           // Prevent duplicates
-          if (prev.some(m => m.id === msg.id)) return prev;
-          return [...prev, msg];
+          if (filtered.some(m => m.id === msg.id)) return filtered;
+          return [...filtered, msg];
         });
       }
     });
@@ -160,8 +189,10 @@ export default function App() {
         fetchCustomers();
         if (selectedAdminCustomerRef.current?.id === msg.customer_id) {
           setMessages(prev => {
-            if (prev.some(m => m.id === msg.id)) return prev;
-            return [...prev, msg];
+            // Remove optimistic message that matches the incoming one
+            const filtered = prev.filter(m => m.id > 0 || m.content !== msg.content || m.sender !== msg.sender);
+            if (filtered.some(m => m.id === msg.id)) return filtered;
+            return [...filtered, msg];
           });
         }
       }
@@ -209,41 +240,83 @@ export default function App() {
   };
 
   const sendMessage = async (content: string, type: 'text' | 'image' | 'audio' = 'text', sender: 'user' | 'ai' | 'admin' = 'user') => {
-    if (!socket) return;
+    console.log(`sendMessage called: sender=${sender}, type=${type}, contentLen=${content.length}`);
+    if (!socket) {
+      console.warn("sendMessage: No socket available");
+      return;
+    }
+
+    if (!content.trim() && type === 'text') return;
+
+    const targetCustomerId = sender === 'admin' ? selectedAdminCustomer?.id : customerId;
+    if (!targetCustomerId) return;
 
     const msgData = {
-      customerId: sender === 'admin' ? selectedAdminCustomer?.id : customerId,
+      customerId: targetCustomerId,
       sender,
       content,
       type
     };
 
-    if (sender === 'admin') {
-      const res = await fetch('/api/admin/reply', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(msgData)
-      });
-      // The socket listener 'admin:new_message' will handle updating the state
-      // but let's be double sure and fetch again if needed or manually update
-      if (res.ok) {
-         // Optionally manually update state to make it feel snappier
-      }
-    } else {
-      socket.emit('sendMessage', msgData);
+    // Optimistic Update for UI
+    const optimisticId = -Date.now(); // Negative ID for temporary identification
+    const optimisticMsg: Message = {
+      id: optimisticId,
+      customer_id: targetCustomerId,
+      sender,
+      content,
+      type,
+      timestamp: new Date().toISOString(),
+      seen: 0
+    };
 
-      // If user sent a message, trigger AI response
-      if (sender === 'user') {
-        const hasPhoto = messages.some(m => m.type === 'image') || type === 'image';
-        const prompt = type === 'audio' ? "I have sent a voice message describing my problem." : content;
-        const aiResponse = await getAiResponse(prompt, language, hasPhoto);
-        socket.emit('sendMessage', {
-          customerId,
-          sender: 'ai',
-          content: aiResponse,
-          type: 'text'
+    if (sender === 'user' || sender === 'admin') {
+      setMessages(prev => [...prev, optimisticMsg]);
+    }
+
+    setIsSending(true);
+
+    try {
+      if (sender === 'admin') {
+        const res = await fetch('/api/admin/reply', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(msgData)
         });
+        if (res.ok) {
+           // Success - server will emit admin:new_message which we catch
+           // We'll replace the optimistic message when the real one arrives
+        }
+      } else {
+        if (!socket.connected) {
+          console.warn("Socket not connected, trying to reconnect...");
+          socket.connect();
+        }
+        
+        socket.emit('sendMessage', msgData);
+
+        // If user sent a message, trigger AI response
+        if (sender === 'user') {
+          const hasPhoto = messages.some(m => m.type === 'image') || type === 'image';
+          const promptText = type === 'audio' ? "I have sent a voice message describing my problem." : content;
+          
+          // Don't await AI response before finishing user send
+          getAiResponse(promptText, language, hasPhoto).then((aiResponse) => {
+            socket.emit('sendMessage', {
+              customerId,
+              sender: 'ai',
+              content: aiResponse,
+              type: 'text'
+            });
+          }).catch(err => {
+            console.error("AI Response error:", err);
+          });
+        }
       }
+    } catch (err) {
+      console.error("Error sending message:", err);
+    } finally {
+      setIsSending(false);
     }
   };
 
@@ -500,6 +573,10 @@ export default function App() {
                 </div>
               </div>
               <div className="flex items-center gap-4">
+                <div className={`p-1 px-2 rounded-full text-[10px] font-bold flex items-center gap-1 ${isConnected ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
+                  <div className={`w-1.5 h-1.5 rounded-full ${isConnected ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'}`} />
+                  {isConnected ? 'Online' : 'Offline'}
+                </div>
                 <div className="flex items-center gap-2 p-2 bg-slate-100 rounded-xl">
                   <Globe size={18} className="text-slate-500" />
                   <select 
@@ -654,7 +731,10 @@ export default function App() {
               </div>
               <div>
                 <h2 className="font-bold leading-tight">{(selectedService?.name as any)?.[language]}</h2>
-                <p className="text-[10px] opacity-80">BHAVANA Multiservices</p>
+                <div className="flex items-center gap-1.5">
+                  <div className={`w-1.5 h-1.5 rounded-full ${isConnected ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'}`} />
+                  <p className="text-[10px] opacity-80">{isConnected ? 'Online' : 'Connecting...'}</p>
+                </div>
               </div>
             </div>
             <div className="flex items-center gap-4">
@@ -677,6 +757,8 @@ export default function App() {
                 className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}
               >
                 <div className={`max-w-[80%] p-3 rounded-2xl shadow-sm relative ${
+                  msg.id < 0 ? 'opacity-70' : ''
+                } ${
                   msg.sender === 'user' 
                     ? 'bg-[#DCF8C6] rounded-tr-none' 
                     : 'bg-white rounded-tl-none'
@@ -693,12 +775,25 @@ export default function App() {
                       {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                     </span>
                     {msg.sender === 'user' && (
+                      msg.id < 0 ? <Clock size={10} className="text-slate-400 animate-pulse" /> :
                       msg.seen ? <CheckCheck size={12} className="text-blue-500" /> : <Check size={12} className="text-slate-400" />
                     )}
                   </div>
                 </div>
               </div>
             ))}
+            {isSending && (
+              <div className="flex justify-end">
+                <div className="bg-[#DCF8C6] rounded-2xl rounded-tr-none p-2 px-4 shadow-sm animate-pulse flex items-center gap-2">
+                  <div className="flex gap-1">
+                    <div className="w-1 h-1 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                    <div className="w-1 h-1 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                    <div className="w-1 h-1 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                  </div>
+                  <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">Sending</span>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Urgent Numbers Banner */}

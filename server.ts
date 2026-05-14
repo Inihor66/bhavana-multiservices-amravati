@@ -30,6 +30,8 @@ async function startServer() {
   console.log('Filename:', _filename);
   console.log('Dirname:', _dirname);
   const db = new Database("bhavana.db");
+  db.pragma('journal_mode = WAL');
+  db.pragma('synchronous = NORMAL');
 
   // Initialize Database
   db.exec(`
@@ -59,6 +61,7 @@ async function startServer() {
     cors: {
       origin: "*",
     },
+    maxHttpBufferSize: 1e8,
   });
 
   app.use(express.json({ limit: '50mb' }));
@@ -111,8 +114,8 @@ async function startServer() {
     // Notify the specific customer
     io.to(customerId).emit("message", message);
     
-    // Also notify other admins
-    io.emit("admin:new_message", message);
+    // notify other admins
+    io.to("admins").emit("admin:new_message", message);
 
     res.json({ success: true });
   });
@@ -134,11 +137,21 @@ async function startServer() {
       console.log(`User ${customerId} joined their room (Socket ID: ${socket.id})`);
     });
 
+    socket.on("joinAdmin", () => {
+      socket.join("admins");
+      console.log(`Admin joined room (Socket ID: ${socket.id})`);
+    });
+
     socket.on("sendMessage", (data) => {
       const { customerId, sender, content, type } = data;
-      console.log(`Message from ${sender} to ${customerId}:`, content.substring(0, 50));
+      console.log(`Socket [${socket.id}] received message from ${sender} for ${customerId} (Type: ${type}, ContentLen: ${content?.length})`);
       
       try {
+        if (!customerId) {
+          console.warn("sendMessage: Missing customerId");
+          return;
+        }
+
         const stmt = db.prepare("INSERT INTO messages (customer_id, sender, content, type) VALUES (?, ?, ?, ?)");
         const info = stmt.run(customerId, sender, content, type || 'text');
         
@@ -152,11 +165,13 @@ async function startServer() {
           seen: 0
         };
 
+        console.log(`Saved message ID ${message.id}. Emitting to room ${customerId} and admins.`);
+
         // Broadcast to customer room
         io.to(customerId).emit("message", message);
         
         // Broadcast to all admins
-        io.emit("admin:new_message", message); 
+        io.to("admins").emit("admin:new_message", message); 
         
         // Update customer last active
         db.prepare("UPDATE customers SET last_active = CURRENT_TIMESTAMP WHERE id = ?").run(customerId);
