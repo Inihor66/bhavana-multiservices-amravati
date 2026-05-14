@@ -16,31 +16,43 @@ const _dirname = typeof import.meta !== 'undefined' && import.meta.url
   : (typeof __dirname !== 'undefined' ? __dirname : '');
 // -----------------------------
 
-const db = new Database("bhavana.db");
+process.on('uncaughtException', (err) => {
+  console.error('UNCAUGHT EXCEPTION:', err);
+});
 
-// Initialize Database
-db.exec(`
-  CREATE TABLE IF NOT EXISTS customers (
-    id TEXT PRIMARY KEY,
-    phone TEXT,
-    address TEXT,
-    name TEXT,
-    last_active DATETIME DEFAULT CURRENT_TIMESTAMP
-  );
-
-  CREATE TABLE IF NOT EXISTS messages (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    customer_id TEXT,
-    sender TEXT,
-    content TEXT,
-    type TEXT,
-    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-    seen INTEGER DEFAULT 0,
-    FOREIGN KEY(customer_id) REFERENCES customers(id)
-  );
-`);
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('UNHANDLED REJECTION at:', promise, 'reason:', reason);
+});
 
 async function startServer() {
+  console.log('Starting server...');
+  console.log('CWD:', process.cwd());
+  console.log('Filename:', _filename);
+  console.log('Dirname:', _dirname);
+  const db = new Database("bhavana.db");
+
+  // Initialize Database
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS customers (
+      id TEXT PRIMARY KEY,
+      phone TEXT,
+      address TEXT,
+      name TEXT,
+      last_active DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      customer_id TEXT,
+      sender TEXT,
+      content TEXT,
+      type TEXT,
+      timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+      seen INTEGER DEFAULT 0,
+      FOREIGN KEY(customer_id) REFERENCES customers(id)
+    );
+  `);
+
   const app = express();
   const httpServer = createServer(app);
   const io = new Server(httpServer, {
@@ -152,7 +164,8 @@ async function startServer() {
   // ... (API and Socket.io routes above)
 
   // Frontend serving logic (must be last)
-  const isProduction = process.env.NODE_ENV === "production" || _filename.endsWith('.cjs');
+  const isBundled = _filename.endsWith('.cjs');
+  const isProduction = process.env.NODE_ENV === "production" || isBundled;
 
   if (!isProduction) {
     console.log("Starting in DEVELOPMENT mode with Vite middleware");
@@ -162,16 +175,13 @@ async function startServer() {
     });
     app.use(vite.middlewares);
 
-    // SPA fallback for development
+    // SPA fallback for dev mode
     app.get('*', async (req, res, next) => {
       const url = req.originalUrl;
       if (url.startsWith('/api')) return next();
       try {
         const fs = await import('fs');
         const templatePath = path.resolve(_dirname, 'index.html');
-        if (!fs.existsSync(templatePath)) {
-          return res.status(404).send('index.html not found at ' + templatePath);
-        }
         let template = fs.readFileSync(templatePath, 'utf-8');
         template = await vite.transformIndexHtml(url, template);
         res.status(200).set({ 'Content-Type': 'text/html' }).end(template);
@@ -182,11 +192,15 @@ async function startServer() {
     });
   } else {
     console.log("Starting in PRODUCTION mode");
-    const staticPath = _dirname;
-    console.log("Static path:", staticPath);
-    app.use(express.static(staticPath));
+    // If bundled, _dirname is dist/. If not bundled (e.g. running from root in prod), it's root.
+    const distPath = isBundled ? _dirname : path.join(_dirname, 'dist');
+    const indexPath = path.join(distPath, 'index.html');
+    
+    console.log("Static files from:", distPath);
+    console.log("Fallback index.html:", indexPath);
+
+    app.use(express.static(distPath));
     app.get('*', (req, res) => {
-      const indexPath = path.join(staticPath, 'index.html');
       res.sendFile(indexPath);
     });
   }

@@ -49,8 +49,21 @@ type Customer = {
 // --- Components ---
 
 export default function App() {
-  const [language, setLanguage] = useState(() => localStorage.getItem('language') || 'en');
-  const [showLanguagePicker, setShowLanguagePicker] = useState(() => !localStorage.getItem('language'));
+  const [language, setLanguage] = useState(() => {
+    try {
+      return localStorage.getItem('language') || 'en';
+    } catch (e) {
+      console.error('LocalStorage not accessible:', e);
+      return 'en';
+    }
+  });
+  const [showLanguagePicker, setShowLanguagePicker] = useState(() => {
+    try {
+      return !localStorage.getItem('language');
+    } catch (e) {
+      return true;
+    }
+  });
   const [searchQuery, setSearchQuery] = useState('');
   const [view, setView] = useState<'home' | 'chat' | 'admin'>('home');
 
@@ -59,15 +72,25 @@ export default function App() {
   };
 
   const handleLanguageSelect = (lang: string) => {
+    try {
+      localStorage.setItem('language', lang);
+    } catch (e) {
+      console.warn('Could not save language to localStorage');
+    }
     setLanguage(lang);
-    localStorage.setItem('language', lang);
     setShowLanguagePicker(false);
   };
   const [selectedService, setSelectedService] = useState<typeof SERVICES[0] | null>(null);
   const [logoClicks, setLogoClicks] = useState(0);
   const [showPasscode, setShowPasscode] = useState(false);
   const [passcode, setPasscode] = useState('');
-  const [customerId] = useState(() => localStorage.getItem('customerId') || Math.random().toString(36).substring(7));
+  const [customerId] = useState(() => {
+    try {
+      return localStorage.getItem('customerId') || Math.random().toString(36).substring(7);
+    } catch (e) {
+      return Math.random().toString(36).substring(7);
+    }
+  });
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
   const [socket, setSocket] = useState<Socket | null>(null);
@@ -77,6 +100,10 @@ export default function App() {
   const [unseenCounts, setUnseenCounts] = useState<Record<string, number>>({});
   const mediaRecorder = useRef<MediaRecorder | null>(null);
   const audioChunks = useRef<Blob[]>([]);
+
+  useEffect(() => {
+    console.log("App component mounted. Customer ID:", customerId);
+  }, []);
 
   useEffect(() => {
     // This is a bit inefficient but works for a demo
@@ -90,7 +117,11 @@ export default function App() {
   }, [customers, messages]);
 
   useEffect(() => {
-    localStorage.setItem('customerId', customerId);
+    try {
+      localStorage.setItem('customerId', customerId);
+    } catch (e) {
+      console.warn('Could not save customerId to localStorage');
+    }
     const newSocket = io();
     setSocket(newSocket);
 

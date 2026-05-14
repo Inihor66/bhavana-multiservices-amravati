@@ -6,7 +6,30 @@
     <title>My Google AI Studio App</title>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div style="display: flex; height: 100vh; width: 100vw; align-items: center; justify-content: center; font-family: sans-serif; color: #64748b; background-color: #f8fafc;">
+        <div style="text-align: center;" id="loading-container">
+          <h1 style="font-size: 1.5rem; font-weight: bold; margin-bottom: 0.5rem; color: #059669;">BHAVANA</h1>
+          <p id="loading-text">Loading application...</p>
+        </div>
+      </div>
+    </div>
+    <script>
+      window.onerror = function(msg, url, lineNo, columnNo, error) {
+        var container = document.getElementById('loading-container');
+        if (container) {
+          var errorDiv = document.createElement('div');
+          errorDiv.style.color = 'red';
+          errorDiv.style.marginTop = '20px';
+          errorDiv.style.fontSize = '12px';
+          errorDiv.style.maxWidth = '80vw';
+          errorDiv.style.wordBreak = 'break-all';
+          errorDiv.innerHTML = 'Error: ' + msg + '<br>Line: ' + lineNo + '<br>URL: ' + url;
+          container.appendChild(errorDiv);
+        }
+        return false;
+      };
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
