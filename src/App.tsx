@@ -231,24 +231,51 @@ export default function App() {
   };
 
   const startRecording = async () => {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    mediaRecorder.current = new MediaRecorder(stream);
-    audioChunks.current = [];
-    mediaRecorder.current.ondataavailable = (e) => audioChunks.current.push(e.data);
-    mediaRecorder.current.onstop = () => {
-      const audioBlob = new Blob(audioChunks.current, { type: 'audio/wav' });
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        sendMessage(reader.result as string, 'audio');
+    try {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error('Media devices not supported');
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') 
+        ? 'audio/webm;codecs=opus' 
+        : MediaRecorder.isTypeSupported('audio/ogg;codecs=opus')
+          ? 'audio/ogg;codecs=opus'
+          : '';
+
+      mediaRecorder.current = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+      audioChunks.current = [];
+      
+      mediaRecorder.current.ondataavailable = (e) => {
+        if (e.data.size > 0) {
+          audioChunks.current.push(e.data);
+        }
       };
-      reader.readAsDataURL(audioBlob);
-    };
-    mediaRecorder.current.start();
-    setIsRecording(true);
+      
+      mediaRecorder.current.onstop = () => {
+        const audioBlob = new Blob(audioChunks.current, { type: mimeType || 'audio/webm' });
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          sendMessage(reader.result as string, 'audio');
+        };
+        reader.readAsDataURL(audioBlob);
+        
+        // Stop all tracks to release microphone
+        stream.getTracks().forEach(track => track.stop());
+      };
+      
+      mediaRecorder.current.start();
+      setIsRecording(true);
+    } catch (err) {
+      console.error('Error starting recording:', err);
+      alert('Could not start recording. Please ensure microphone access is granted.');
+    }
   };
 
   const stopRecording = () => {
-    mediaRecorder.current?.stop();
+    if (mediaRecorder.current && mediaRecorder.current.state === 'recording') {
+      mediaRecorder.current.stop();
+    }
     setIsRecording(false);
   };
 
