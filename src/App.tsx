@@ -101,6 +101,7 @@ export default function App() {
   const [isSending, setIsSending] = useState(false);
   const [unseenCounts, setUnseenCounts] = useState<Record<string, number>>({});
   const [isConnected, setIsConnected] = useState(false);
+  const [socketError, setSocketError] = useState<string | null>(null);
   const mediaRecorder = useRef<MediaRecorder | null>(null);
   const audioChunks = useRef<Blob[]>([]);
   const selectedAdminCustomerRef = useRef<Customer | null>(null);
@@ -123,9 +124,15 @@ export default function App() {
     const updateCounts = async () => {
       const newCounts: Record<string, number> = {};
       for (const c of customers) {
-        const res = await fetch(`/api/admin/messages/${c.id}`);
-        const msgs = await res.json();
-        newCounts[c.id] = msgs.filter((m: any) => m.sender !== 'admin' && !m.seen).length;
+        try {
+          const res = await fetch(`/api/admin/messages/${c.id}`);
+          if (res.ok) {
+            const msgs = await res.json();
+            newCounts[c.id] = msgs.filter((m: any) => m.sender !== 'admin' && !m.seen).length;
+          }
+        } catch (e) {
+          console.error("Error fetching admin counts:", e);
+        }
       }
       setUnseenCounts(newCounts);
     };
@@ -139,7 +146,10 @@ export default function App() {
       console.log("Emitting joinAdmin");
       socket.emit('joinAdmin');
     }
-  }, [view, socket, isConnected]);
+    if (view === 'chat' && customerId) {
+      fetchMessages(customerId);
+    }
+  }, [view, socket, isConnected, customerId]);
 
   useEffect(() => {
     try {
@@ -147,28 +157,46 @@ export default function App() {
     } catch (e) {
       console.warn('Could not save customerId to localStorage');
     }
+    console.log("Initializing socket...");
     const newSocket = io({
       reconnectionAttempts: 10,
-      timeout: 20000,
-      transports: ['websocket', 'polling'], // Try websocket first
+      timeout: 10000,
+      transports: ['websocket', 'polling'],
     });
     setSocket(newSocket);
 
     newSocket.on('connect', () => {
       console.log("Socket connected! ID:", newSocket.id);
       setIsConnected(true);
+      setSocketError(null);
       newSocket.emit('join', customerId);
       fetchCustomers();
     });
 
-    newSocket.on('disconnect', () => {
-      console.log("Socket disconnected");
+    newSocket.on('reconnect', (attempt) => {
+      console.log("Socket reconnected on attempt:", attempt);
+      setIsConnected(true);
+      setSocketError(null);
+    });
+
+    newSocket.on('reconnect_attempt', (attempt) => {
+      console.log(`Socket attempting to reconnect... (Attempt ${attempt})`);
+      setSocketError(`Connecting... (Attempt ${attempt})`);
+    });
+
+    newSocket.on('disconnect', (reason) => {
+      console.log("Socket disconnected. Reason:", reason);
       setIsConnected(false);
+      setSocketError(`Disconnected: ${reason}`);
+      if (reason === 'io server disconnect' || reason === 'transport close') {
+        newSocket.connect();
+      }
     });
 
     newSocket.on('connect_error', (err) => {
-      console.error("Socket Connection Error:", err);
+      console.error("Socket Connection Error:", err.message);
       setIsConnected(false);
+      setSocketError(`Connection Error: ${err.message}`);
     });
 
     newSocket.on('message', (msg: Message & { tempId?: string }) => {
@@ -578,9 +606,17 @@ export default function App() {
                 </div>
               </div>
               <div className="flex items-center gap-4">
-                <div className={`p-1 px-2 rounded-full text-[10px] font-bold flex items-center gap-1 ${isConnected ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
-                  <div className={`w-1.5 h-1.5 rounded-full ${isConnected ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'}`} />
-                  {isConnected ? 'Online' : 'Offline'}
+                <div className={`p-1 px-2 rounded-full text-[10px] font-bold flex items-center gap-1 ${isConnected ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
+                  <div className={`w-1.5 h-1.5 rounded-full ${isConnected ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'}`} />
+                  {isConnected ? t('online') : (socketError || 'Offline')}
+                  {!isConnected && (
+                    <button 
+                      onClick={() => socket?.connect()}
+                      className="ml-1 underline"
+                    >
+                      Retry
+                    </button>
+                  )}
                 </div>
                 <div className="flex items-center gap-2 p-2 bg-slate-100 rounded-xl">
                   <Globe size={18} className="text-slate-500" />
@@ -737,8 +773,16 @@ export default function App() {
               <div>
                 <h2 className="font-bold leading-tight">{(selectedService?.name as any)?.[language]}</h2>
                 <div className="flex items-center gap-1.5">
-                  <div className={`w-1.5 h-1.5 rounded-full ${isConnected ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'}`} />
-                  <p className="text-[10px] opacity-80">{isConnected ? 'Online' : 'Connecting...'}</p>
+                  <div className={`w-1.5 h-1.5 rounded-full ${isConnected ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'}`} />
+                  <p className="text-[10px] opacity-80">{isConnected ? t('online') : (socketError || t('connecting'))}</p>
+                  {!isConnected && (
+                    <button 
+                      onClick={() => socket?.connect()}
+                      className="text-[10px] bg-white/20 px-2 py-0.5 rounded hover:bg-white/30 transition-colors"
+                    >
+                      Retry
+                    </button>
+                  )}
                 </div>
               </div>
             </div>

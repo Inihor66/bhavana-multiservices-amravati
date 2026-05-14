@@ -66,8 +66,17 @@ async function startServer() {
   const io = new Server(httpServer, {
     cors: {
       origin: "*",
+      methods: ["GET", "POST"]
     },
     maxHttpBufferSize: 1e8,
+    pingTimeout: 60000,
+    pingInterval: 25000,
+    transports: ['websocket', 'polling']
+  });
+
+  // Socket monitoring
+  io.engine.on("connection_error", (err) => {
+    console.error("Socket.io Engine Connection Error:", err.req ? `${err.req.method} ${err.req.url}` : 'No request', "Message:", err.message);
   });
 
   app.use(express.json({ limit: '50mb' }));
@@ -83,10 +92,9 @@ async function startServer() {
     console.log("Health check hit");
     res.json({ 
       status: "ok", 
+      socket_clients: io.engine.clientsCount,
+      ai_configured: !!model,
       env: process.env.NODE_ENV,
-      cwd: process.cwd(),
-      dirname: _dirname,
-      filename: _filename
     });
   });
 
@@ -190,6 +198,13 @@ async function startServer() {
         if (!customerId) {
           console.warn("sendMessage: Missing customerId");
           return;
+        }
+
+        // Ensure customer exists (upsert)
+        const checkCustomer = db.prepare("SELECT id FROM customers WHERE id = ?").get(customerId);
+        if (!checkCustomer) {
+          console.log(`Customer ${customerId} not found, creating placeholder.`);
+          db.prepare("INSERT INTO customers (id, last_active) VALUES (?, CURRENT_TIMESTAMP)").run(customerId);
         }
 
         const stmt = db.prepare("INSERT INTO messages (customer_id, sender, content, type) VALUES (?, ?, ?, ?)");
