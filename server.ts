@@ -65,16 +65,18 @@ async function startServer() {
   const app = express();
   const httpServer = createServer(app);
   const io = new Server(httpServer, {
+    maxHttpBufferSize: 1e8,
+    pingTimeout: 180000,
+    pingInterval: 10000,
+    allowEIO3: true,
+    perMessageDeflate: {
+      threshold: 1024
+    },
     cors: {
       origin: "*",
-      methods: ["GET", "POST"]
-    },
-    maxHttpBufferSize: 1e8,
-    pingTimeout: 120000,
-    pingInterval: 25000,
-    allowEIO3: true,
-    perMessageDeflate: false,
-    transports: ['websocket'] // Force WebSocket to avoid XHR polling issues in cloud environments
+      methods: ["GET", "POST"],
+      credentials: true
+    }
   });
 
   // Socket monitoring
@@ -143,23 +145,32 @@ async function startServer() {
     }
     
     try {
-      const { message, language, hasSentPhoto } = req.body;
+      const { message, language, hasSentPhoto, history } = req.body;
       
+      const historyText = history && history.length > 0 
+        ? history.map((h: any) => `${h.sender.toUpperCase()}: ${h.content}`).join('\n')
+        : 'No previous history.';
+
       const prompt = `You are a friendly and professional customer support assistant for BHAVANA MULTISERVICES. 
       The user is communicating in ${language}. 
       
       Your style: Casual yet professional, with a warm human touch. Think of yourself as a helpful neighbor who is also an expert.
       
-      Guidelines:
-      1. RELEVANCE: Respond directly to what the user said. Don't be a robot. If they say "hi", say "hi" back warmly.
-      2. CONCISENESS: Keep it short and sweet (1-2 sentences).
-      3. HUMAN TOUCH: Use natural phrasing. Avoid overly formal or corporate jargon.
-      4. MANDATORY CLOSING: You must end your message by letting them know our team is looking into it. Use variations like: "Our team is checking this out and will get back to you soon!" or "We're on it! Someone from our team will reach out shortly."
-      5. PHOTOS: If they haven't sent a photo yet (hasSentPhoto: ${hasSentPhoto}), suggest it naturally: "A quick photo of the issue would really help us see what's going on!"
-      6. CONTACT: For urgent help, they can call us 24/7 at 9881345984.
-      7. LANGUAGE: Speak ONLY in ${language}.
+      Recent conversation context for your reference:
+      ${historyText}
       
-      User message: ${message}`;
+      New user message to respond to: ${message}
+      
+      Guidelines for your response:
+      1. RELEVANCE: Respond directly and specifically to the user's latest message based on the context provided above. Don't be a generic bot.
+      2. CONCISENESS: Keep it short (usually 1-2 sentences).
+      3. HUMAN TOUCH: Use natural phrasing. Avoid corporate jargon.
+      4. MANDATORY CLOSING: End by assuring them that the team is checking it (e.g., "Team humara check kar raha hai, jaldi solution denge!").
+      5. PHOTOS: If they haven't sent a photo yet (hasSentPhoto: ${hasSentPhoto}), and it seems relevant, suggest it: "Agar aap photo bhej sakein toh zyada clear ho jayega."
+      6. CONTACT: If it's urgent, mention 9881345984.
+      7. LANGUAGE: Respond ONLY in ${language}. If language is "Hindi", use natural Hinglish/Hindi as normally spoken.
+      
+      Assistant Response:`;
 
       const result = await model.generateContent(prompt);
       const response = await result.response;

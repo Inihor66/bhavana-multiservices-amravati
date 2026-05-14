@@ -1,9 +1,9 @@
-export async function getAiResponse(message: string, language: string, hasSentPhoto: boolean) {
+export async function getAiResponse(message: string, language: string, hasSentPhoto: boolean, history: { sender: string, content: string }[] = []) {
   try {
     const response = await fetch('/api/ai/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message, language, hasSentPhoto })
+      body: JSON.stringify({ message, language, hasSentPhoto, history })
     });
     
     if (!response.ok) {

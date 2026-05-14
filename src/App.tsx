@@ -94,7 +94,7 @@ export default function App() {
   });
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
-  const [socket, setSocket] = useState<Socket | null>(null);
+  const socketRef = useRef<Socket | null>(null);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [selectedAdminCustomer, setSelectedAdminCustomer] = useState<Customer | null>(null);
   const [isRecording, setIsRecording] = useState(false);
@@ -102,6 +102,9 @@ export default function App() {
   const [unseenCounts, setUnseenCounts] = useState<Record<string, number>>({});
   const [isConnected, setIsConnected] = useState(false);
   const [socketError, setSocketError] = useState<string | null>(null);
+
+  // Helper to get socket safely
+  const socket = socketRef.current;
   const mediaRecorder = useRef<MediaRecorder | null>(null);
   const audioChunks = useRef<Blob[]>([]);
   const selectedAdminCustomerRef = useRef<Customer | null>(null);
@@ -149,7 +152,7 @@ export default function App() {
     if (view === 'chat' && customerId) {
       fetchMessages(customerId);
     }
-  }, [view, socket, isConnected, customerId]);
+  }, [view, isConnected, customerId]);
 
   useEffect(() => {
     try {
@@ -157,13 +160,19 @@ export default function App() {
     } catch (e) {
       console.warn('Could not save customerId to localStorage');
     }
+    
+    if (socketRef.current) return;
+
     console.log("Initializing socket...");
     const newSocket = io({
-      reconnectionAttempts: 20,
-      timeout: 30000,
-      transports: ['websocket'], // Force WebSocket to solve xhr poll error
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 1000,
+      timeout: 20000,
+      transports: ['websocket', 'polling'],
+      autoConnect: true
     });
-    setSocket(newSocket);
+    
+    socketRef.current = newSocket;
 
     newSocket.on('connect', () => {
       console.log("Socket connected! ID:", newSocket.id);
@@ -181,13 +190,14 @@ export default function App() {
 
     newSocket.on('reconnect_attempt', (attempt) => {
       console.log(`Socket attempting to reconnect... (Attempt ${attempt})`);
-      setSocketError(`Connecting... (Attempt ${attempt})`);
+      setIsConnected(false);
+      setSocketError(`Connecting... (${attempt})`);
     });
 
     newSocket.on('disconnect', (reason) => {
       console.log("Socket disconnected. Reason:", reason);
       setIsConnected(false);
-      setSocketError(`Disconnected: ${reason}`);
+      setSocketError(`Offline: ${reason}`);
       if (reason === 'io server disconnect' || reason === 'transport close') {
         newSocket.connect();
       }
@@ -196,21 +206,17 @@ export default function App() {
     newSocket.on('connect_error', (err) => {
       console.error("Socket Connection Error:", err.message);
       setIsConnected(false);
-      setSocketError(`Connection Error: ${err.message}`);
+      setSocketError(`Err: ${err.message}`);
     });
 
     newSocket.on('message', (msg: Message & { tempId?: string }) => {
-      console.log("Received 'message' event:", msg);
       if (msg.customer_id === customerId) {
         setMessages(prev => {
-          // Remove optimistic message that matches the incoming one by tempId or content
           const filtered = prev.filter(m => {
-            if (m.id > 0) return true; // Keep permanent messages
+            if (m.id > 0) return true;
             if (msg.tempId && m.tempId === msg.tempId) return false;
-            // Fallback for older messages or different flow
             return m.content !== msg.content || m.sender !== msg.sender;
           });
-          // Prevent duplicates
           if (filtered.some(m => m.id === msg.id)) return filtered;
           return [...filtered, msg];
         });
@@ -218,12 +224,10 @@ export default function App() {
     });
 
     newSocket.on('admin:new_message', (msg: Message & { tempId?: string }) => {
-      console.log("Received 'admin:new_message' event:", msg);
       if (viewRef.current === 'admin') {
         fetchCustomers();
         if (selectedAdminCustomerRef.current?.id === msg.customer_id) {
           setMessages(prev => {
-            // Remove optimistic message that matches the incoming one
             const filtered = prev.filter(m => {
               if (m.id > 0) return true;
               if (msg.tempId && m.tempId === msg.tempId) return false;
@@ -237,7 +241,6 @@ export default function App() {
     });
 
     return () => {
-      newSocket.disconnect();
     };
   }, [customerId]);
 
@@ -338,8 +341,11 @@ export default function App() {
           const hasPhoto = messages.some(m => m.type === 'image') || type === 'image';
           const promptText = type === 'audio' ? "I have sent a voice message describing my problem." : content;
           
+          // Get last 5 messages for context
+          const history = messages.slice(-5).map(m => ({ sender: m.sender, content: m.content }));
+          
           // Don't await AI response before finishing user send
-          getAiResponse(promptText, language, hasPhoto).then((aiResponse) => {
+          getAiResponse(promptText, language, hasPhoto, history).then((aiResponse) => {
             sendMessage(aiResponse, 'text', 'ai');
           }).catch(err => {
             console.error("AI Response error:", err);
