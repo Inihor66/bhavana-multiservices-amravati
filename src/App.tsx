@@ -159,10 +159,9 @@ export default function App() {
     }
     console.log("Initializing socket...");
     const newSocket = io({
-      reconnectionAttempts: 10,
-      timeout: 20000,
-      forceNew: true,
-      transports: ['polling', 'websocket'], 
+      reconnectionAttempts: 20,
+      timeout: 30000,
+      transports: ['websocket'], // Force WebSocket to solve xhr poll error
     });
     setSocket(newSocket);
 

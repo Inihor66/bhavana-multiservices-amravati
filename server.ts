@@ -74,7 +74,7 @@ async function startServer() {
     pingInterval: 25000,
     allowEIO3: true,
     perMessageDeflate: false,
-    transports: ['polling', 'websocket'] // Allow both, but polling is usually safer in cloud environments
+    transports: ['websocket'] // Force WebSocket to avoid XHR polling issues in cloud environments
   });
 
   // Socket monitoring
@@ -223,13 +223,13 @@ async function startServer() {
           tempId // Echo back the tempId
         };
 
-        console.log(`Saved message ID ${message.id}. Emitting to room ${customerId} and admins.`);
+        console.log(`Saved message ID ${message.id}. Emitting to room ${customerId} (excluding sender) and admins.`);
 
-        // Broadcast to customer room
-        io.to(customerId).emit("message", message);
+        // Broadcast to customer room (excluding the original sender)
+        socket.to(customerId).emit("message", message);
         
-        // Also emit directly to the sender as a safety measure
-        socket.emit("message", message);
+        // Also emit directly to the sender so they know it was received and saved
+        socket.emit("message", { ...message, tempId }); 
         
         // Broadcast to all admins
         io.to("admins").emit("admin:new_message", message); 
