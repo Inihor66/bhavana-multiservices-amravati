@@ -6,12 +6,6 @@ import Database from "better-sqlite3";
 import path from "path";
 import { fileURLToPath } from "url";
 
-import { GoogleGenAI } from "@google/genai";
-
-// Initialize Gemini
-const genAI = process.env.GEMINI_API_KEY ? new GoogleGenAI(process.env.GEMINI_API_KEY) : null;
-const model = genAI ? genAI.getGenerativeModel({ model: "gemini-1.5-flash" }) : null;
-
 // --- ESM/CJS Compatibility ---
 const _filename = typeof import.meta !== 'undefined' && import.meta.url
   ? fileURLToPath(import.meta.url)
@@ -69,9 +63,8 @@ async function startServer() {
       methods: ["GET", "POST"]
     },
     maxHttpBufferSize: 1e8,
-    pingTimeout: 60000,
+    pingTimeout: 120000,
     pingInterval: 25000,
-    transports: ['websocket', 'polling']
   });
 
   // Socket monitoring
@@ -93,7 +86,6 @@ async function startServer() {
     res.json({ 
       status: "ok", 
       socket_clients: io.engine.clientsCount,
-      ai_configured: !!model,
       env: process.env.NODE_ENV,
     });
   });
@@ -141,39 +133,6 @@ async function startServer() {
     const stmt = db.prepare("INSERT OR REPLACE INTO customers (id, phone, address, name, last_active) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)");
     stmt.run(id, phone, address, name);
     res.json({ success: true });
-  });
-
-  app.post("/api/ai/chat", async (req, res) => {
-    if (!model) {
-      return res.status(503).json({ error: "AI service not configured" });
-    }
-    
-    try {
-      const { message, language, hasSentPhoto } = req.body;
-      
-      const prompt = `You are a friendly and professional customer support assistant for BHAVANA MULTISERVICES. 
-      The user is communicating in ${language}. 
-      
-      Your style: Casual yet professional, with a warm human touch. Think of yourself as a helpful neighbor who is also an expert.
-      
-      Guidelines:
-      1. RELEVANCE: Respond directly to what the user said. Don't be a robot. If they say "hi", say "hi" back warmly.
-      2. CONCISENESS: Keep it short and sweet (1-2 sentences).
-      3. HUMAN TOUCH: Use natural phrasing. Avoid overly formal or corporate jargon.
-      4. MANDATORY CLOSING: You must end your message by letting them know our team is looking into it. Use variations like: "Our team is checking this out and will get back to you soon!" or "We're on it! Someone from our team will reach out shortly."
-      5. PHOTOS: If they haven't sent a photo yet (hasSentPhoto: ${hasSentPhoto}), suggest it naturally: "A quick photo of the issue would really help us see what's going on!"
-      6. CONTACT: For urgent help, they can call us 24/7 at 9881345984.
-      7. LANGUAGE: Speak ONLY in ${language}.
-      
-      User message: ${message}`;
-
-      const result = await model.generateContent(prompt);
-      const response = result.response;
-      res.json({ text: response.text() });
-    } catch (error: any) {
-      console.error("AI Error:", error);
-      res.status(500).json({ error: error.message });
-    }
   });
 
   // Socket.io logic

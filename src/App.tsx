@@ -160,8 +160,7 @@ export default function App() {
     console.log("Initializing socket...");
     const newSocket = io({
       reconnectionAttempts: 10,
-      timeout: 10000,
-      transports: ['websocket', 'polling'],
+      timeout: 20000,
     });
     setSocket(newSocket);
 
@@ -611,7 +610,10 @@ export default function App() {
                   {isConnected ? t('online') : (socketError || 'Offline')}
                   {!isConnected && (
                     <button 
-                      onClick={() => socket?.connect()}
+                      onClick={() => {
+                        console.log("Manual reconnect triggered");
+                        socket?.disconnect().connect();
+                      }}
                       className="ml-1 underline"
                     >
                       Retry
@@ -777,7 +779,10 @@ export default function App() {
                   <p className="text-[10px] opacity-80">{isConnected ? t('online') : (socketError || t('connecting'))}</p>
                   {!isConnected && (
                     <button 
-                      onClick={() => socket?.connect()}
+                      onClick={() => {
+                        console.log("Manual reconnect triggered");
+                        socket?.disconnect().connect();
+                      }}
                       className="text-[10px] bg-white/20 px-2 py-0.5 rounded hover:bg-white/30 transition-colors"
                     >
                       Retry
