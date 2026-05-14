@@ -100,21 +100,36 @@ export default function App() {
   const [unseenCounts, setUnseenCounts] = useState<Record<string, number>>({});
   const mediaRecorder = useRef<MediaRecorder | null>(null);
   const audioChunks = useRef<Blob[]>([]);
+  const selectedAdminCustomerRef = useRef<Customer | null>(null);
+  const viewRef = useRef<string>(view);
+
+  useEffect(() => {
+    selectedAdminCustomerRef.current = selectedAdminCustomer;
+  }, [selectedAdminCustomer]);
+
+  useEffect(() => {
+    viewRef.current = view;
+  }, [view]);
 
   useEffect(() => {
     console.log("App component mounted. Customer ID:", customerId);
   }, []);
 
   useEffect(() => {
-    // This is a bit inefficient but works for a demo
-    // In a real app, the server would provide these counts
-    customers.forEach(async (c) => {
-      const res = await fetch(`/api/admin/messages/${c.id}`);
-      const msgs = await res.json();
-      const unseen = msgs.filter((m: any) => m.sender !== 'admin' && !m.seen).length;
-      setUnseenCounts(prev => ({ ...prev, [c.id]: unseen }));
-    });
-  }, [customers, messages]);
+    // Current counts
+    const updateCounts = async () => {
+      const newCounts: Record<string, number> = {};
+      for (const c of customers) {
+        const res = await fetch(`/api/admin/messages/${c.id}`);
+        const msgs = await res.json();
+        newCounts[c.id] = msgs.filter((m: any) => m.sender !== 'admin' && !m.seen).length;
+      }
+      setUnseenCounts(newCounts);
+    };
+    if (view === 'admin') {
+      updateCounts();
+    }
+  }, [customers, messages, view]);
 
   useEffect(() => {
     try {
@@ -129,17 +144,25 @@ export default function App() {
     fetchCustomers();
 
     newSocket.on('message', (msg: Message) => {
+      console.log("Received 'message' event:", msg);
       if (msg.customer_id === customerId) {
-        setMessages(prev => [...prev, msg]);
+        setMessages(prev => {
+          // Prevent duplicates
+          if (prev.some(m => m.id === msg.id)) return prev;
+          return [...prev, msg];
+        });
       }
     });
 
     newSocket.on('admin:new_message', (msg: Message) => {
-      // If we are in admin view, we might want to refresh or update
-      if (view === 'admin') {
+      console.log("Received 'admin:new_message' event:", msg);
+      if (viewRef.current === 'admin') {
         fetchCustomers();
-        if (selectedAdminCustomer?.id === msg.customer_id) {
-          setMessages(prev => [...prev, msg]);
+        if (selectedAdminCustomerRef.current?.id === msg.customer_id) {
+          setMessages(prev => {
+            if (prev.some(m => m.id === msg.id)) return prev;
+            return [...prev, msg];
+          });
         }
       }
     });
@@ -147,7 +170,7 @@ export default function App() {
     return () => {
       newSocket.disconnect();
     };
-  }, [customerId, view, selectedAdminCustomer]);
+  }, [customerId]);
 
   const fetchCustomers = async () => {
     const res = await fetch('/api/admin/customers');
@@ -196,11 +219,16 @@ export default function App() {
     };
 
     if (sender === 'admin') {
-      await fetch('/api/admin/reply', {
+      const res = await fetch('/api/admin/reply', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(msgData)
       });
+      // The socket listener 'admin:new_message' will handle updating the state
+      // but let's be double sure and fetch again if needed or manually update
+      if (res.ok) {
+         // Optionally manually update state to make it feel snappier
+      }
     } else {
       socket.emit('sendMessage', msgData);
 

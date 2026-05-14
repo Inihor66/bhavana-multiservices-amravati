@@ -94,11 +94,11 @@ async function startServer() {
 
   app.post("/api/admin/reply", (req, res) => {
     const { customerId, content, type } = req.body;
+    console.log(`Admin replying to ${customerId}:`, content);
     const stmt = db.prepare("INSERT INTO messages (customer_id, sender, content, type) VALUES (?, ?, ?, ?)");
     const info = stmt.run(customerId, 'admin', content, type || 'text');
     
-    // Notify the specific customer
-    io.to(customerId).emit("message", {
+    const message = {
       id: info.lastInsertRowid,
       customer_id: customerId,
       sender: 'admin',
@@ -106,13 +106,20 @@ async function startServer() {
       type: type || 'text',
       timestamp: new Date().toISOString(),
       seen: 0
-    });
+    };
+
+    // Notify the specific customer
+    io.to(customerId).emit("message", message);
+    
+    // Also notify other admins
+    io.emit("admin:new_message", message);
 
     res.json({ success: true });
   });
 
   app.post("/api/customer/register", (req, res) => {
     const { id, phone, address, name } = req.body;
+    console.log(`Registering customer ${id}:`, { phone, name });
     const stmt = db.prepare("INSERT OR REPLACE INTO customers (id, phone, address, name, last_active) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)");
     stmt.run(id, phone, address, name);
     res.json({ success: true });
@@ -124,31 +131,38 @@ async function startServer() {
 
     socket.on("join", (customerId) => {
       socket.join(customerId);
-      console.log(`User ${customerId} joined their room`);
+      console.log(`User ${customerId} joined their room (Socket ID: ${socket.id})`);
     });
 
     socket.on("sendMessage", (data) => {
       const { customerId, sender, content, type } = data;
+      console.log(`Message from ${sender} to ${customerId}:`, content.substring(0, 50));
       
-      const stmt = db.prepare("INSERT INTO messages (customer_id, sender, content, type) VALUES (?, ?, ?, ?)");
-      const info = stmt.run(customerId, sender, content, type || 'text');
-      
-      const message = {
-        id: info.lastInsertRowid,
-        customer_id: customerId,
-        sender,
-        content,
-        type: type || 'text',
-        timestamp: new Date().toISOString(),
-        seen: 0
-      };
+      try {
+        const stmt = db.prepare("INSERT INTO messages (customer_id, sender, content, type) VALUES (?, ?, ?, ?)");
+        const info = stmt.run(customerId, sender, content, type || 'text');
+        
+        const message = {
+          id: info.lastInsertRowid,
+          customer_id: customerId,
+          sender,
+          content,
+          type: type || 'text',
+          timestamp: new Date().toISOString(),
+          seen: 0
+        };
 
-      // Broadcast to admin room and customer room
-      io.to(customerId).emit("message", message);
-      io.emit("admin:new_message", message); // Simple broadcast to all admins for now
-      
-      // Update customer last active
-      db.prepare("UPDATE customers SET last_active = CURRENT_TIMESTAMP WHERE id = ?").run(customerId);
+        // Broadcast to customer room
+        io.to(customerId).emit("message", message);
+        
+        // Broadcast to all admins
+        io.emit("admin:new_message", message); 
+        
+        // Update customer last active
+        db.prepare("UPDATE customers SET last_active = CURRENT_TIMESTAMP WHERE id = ?").run(customerId);
+      } catch (err) {
+        console.error("Error saving/emitting message:", err);
+      }
     });
 
     socket.on("markSeen", (customerId) => {
