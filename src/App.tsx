@@ -161,7 +161,8 @@ export default function App() {
     const newSocket = io({
       reconnectionAttempts: 10,
       timeout: 20000,
-      transports: ['polling', 'websocket'], // Force polling first for maximum reliability
+      forceNew: true,
+      transports: ['polling', 'websocket'], 
     });
     setSocket(newSocket);
 
@@ -309,7 +310,7 @@ export default function App() {
       tempId
     };
 
-    if (sender === 'user' || sender === 'admin') {
+    if (sender === 'user' || sender === 'admin' || sender === 'ai') {
       setMessages(prev => [...prev, optimisticMsg]);
     }
 
@@ -610,15 +611,23 @@ export default function App() {
                   <div className={`w-1.5 h-1.5 rounded-full ${isConnected ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'}`} />
                   {isConnected ? t('online') : (socketError || 'Offline')}
                   {!isConnected && (
-                    <button 
-                      onClick={() => {
-                        console.log("Manual reconnect triggered");
-                        socket?.disconnect().connect();
-                      }}
-                      className="ml-1 underline"
-                    >
-                      Retry
-                    </button>
+                    <div className="flex gap-1 ml-1">
+                      <button 
+                        onClick={() => {
+                          console.log("Manual reconnect triggered");
+                          socket?.disconnect().connect();
+                        }}
+                        className="underline"
+                      >
+                        Retry
+                      </button>
+                      <button 
+                        onClick={() => window.location.reload()}
+                        className="underline opacity-50"
+                      >
+                        Reset
+                      </button>
+                    </div>
                   )}
                 </div>
                 <div className="flex items-center gap-2 p-2 bg-slate-100 rounded-xl">
@@ -779,15 +788,23 @@ export default function App() {
                   <div className={`w-1.5 h-1.5 rounded-full ${isConnected ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'}`} />
                   <p className="text-[10px] opacity-80">{isConnected ? t('online') : (socketError || t('connecting'))}</p>
                   {!isConnected && (
-                    <button 
-                      onClick={() => {
-                        console.log("Manual reconnect triggered");
-                        socket?.disconnect().connect();
-                      }}
-                      className="text-[10px] bg-white/20 px-2 py-0.5 rounded hover:bg-white/30 transition-colors"
-                    >
-                      Retry
-                    </button>
+                    <div className="flex gap-2">
+                      <button 
+                        onClick={() => {
+                          console.log("Manual reconnect triggered");
+                          socket?.disconnect().connect();
+                        }}
+                        className="text-[10px] bg-white/20 px-2 py-0.5 rounded hover:bg-white/30 transition-colors"
+                      >
+                        Retry
+                      </button>
+                      <button 
+                        onClick={() => window.location.reload()}
+                        className="text-[10px] bg-white/10 px-2 py-0.5 rounded hover:bg-white/20 transition-colors opacity-50"
+                      >
+                        Reset
+                      </button>
+                    </div>
                   )}
                 </div>
               </div>

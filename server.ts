@@ -72,6 +72,8 @@ async function startServer() {
     maxHttpBufferSize: 1e8,
     pingTimeout: 120000,
     pingInterval: 25000,
+    allowEIO3: true,
+    perMessageDeflate: false,
     transports: ['polling', 'websocket'] // Allow both, but polling is usually safer in cloud environments
   });
 
@@ -105,7 +107,7 @@ async function startServer() {
   });
 
   app.get("/api/admin/messages/:customerId", (req, res) => {
-    const messages = db.prepare("SELECT * FROM messages WHERE customer_id = ? ORDER BY timestamp ASC").all();
+    const messages = db.prepare("SELECT * FROM messages WHERE customer_id = ? ORDER BY timestamp ASC").all(req.params.customerId);
     res.json(messages);
   });
 
