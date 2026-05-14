@@ -161,6 +161,7 @@ export default function App() {
     const newSocket = io({
       reconnectionAttempts: 10,
       timeout: 20000,
+      transports: ['polling', 'websocket'], // Force polling first for maximum reliability
     });
     setSocket(newSocket);
 
